@@ -53,7 +53,6 @@ bool CUART::Open() {
     // nastavime vychozi rychlost a velikost znaku
     Set_Char_Length(NUART_Char_Length::Char_8);
     Set_Baud_Rate(NUART_Baud_Rate::BR_9600);
-    Set_Blocking_State(NUART_Blocking_State::Blocking);
 
     spinlock_unlock(&mOpenLock);
 
@@ -99,14 +98,6 @@ void CUART::Set_Char_Length(NUART_Char_Length len) {
     }
 
     mAUX.Set_Register(hal::AUX_Reg::MU_LCR, (mAUX.Get_Register(hal::AUX_Reg::MU_LCR) & 0xFFFFFFFE) | static_cast<unsigned int>(len));
-}
-
-NUART_Blocking_State CUART::Get_Blocking_State() {
-    return mBlocking_State;
-}
-
-void CUART::Set_Blocking_State(NUART_Blocking_State state) {
-    mBlocking_State = state;
 }
 
 NUART_Baud_Rate CUART::Get_Baud_Rate() {
@@ -215,28 +206,21 @@ void CUART::IRQ_Callback() {
         mRx_Head = next;
     }
 
-    // Pokud je cekajici soubor a buffer neni prazdny (head a tail jsou ruzne hodnoty), probudime proces
-    if (mWaiting_File && mRx_Head != mRx_Tail) {
-        mWaiting_File->Notify(1);
-        mWaiting_File = nullptr;
+    // callback pri prijeti dat
+    if (mRx_Callback && mRx_Head != mRx_Tail) {
+        mRx_Callback(mRx_Callback_Userdata);
     }
 
     spinlock_unlock(&mRx_Lock);
 }
 
-int CUART::Read_Or_Wait(char *str, unsigned int len, IFile* file) {
+int CUART::Read(char *str, unsigned int len) {
     spinlock_lock(&mRx_Lock);
 
-    while (mBlocking_State == NUART_Blocking_State::Blocking && mRx_Head == mRx_Tail) {
-        if (!file) {
-            spinlock_unlock(&mRx_Lock);
-            return 0;
-        }
-
+    if (mRx_Head == mRx_Tail) {
+        // buffer je prazdny
         spinlock_unlock(&mRx_Lock);
-        // Wait nad souborem pred zablokovanim zvola Wait_For_Event
-        file->Wait(1);
-        spinlock_lock(&mRx_Lock);
+        return 0;
     }
 
     // zjisteni delky zpravy cekajici v bufferu
@@ -259,11 +243,12 @@ int CUART::Read_Or_Wait(char *str, unsigned int len, IFile* file) {
     return msg_len;
 }
 
-// implementace Wait() nad souborem
-void CUART::Wait_For_Event(IFile* file) {
+void CUART::Set_Rx_Callback(TUART_Rx_Callback callback, void* userdata)
+{
     spinlock_lock(&mRx_Lock);
 
-    mWaiting_File = file;
+    mRx_Callback = callback;
+    mRx_Callback_Userdata = userdata;
 
     spinlock_unlock(&mRx_Lock);
 }

@@ -8,6 +8,8 @@
 
 constexpr int CUART_BUF_SIZE = 8192;
 
+using TUART_Rx_Callback = void (*)(void* userdata);
+
 class CUART {
     private:
         // odkaz na AUX driver
@@ -27,7 +29,10 @@ class CUART {
         uint32_t mRx_Head = 0;
         uint32_t mRx_Tail = 0;
         spinlock_t mRx_Lock;
-        IFile* mWaiting_File = nullptr;
+
+        // callback pro notifikaci pri prijeti dat
+        TUART_Rx_Callback mRx_Callback = nullptr;
+        void* mRx_Callback_Userdata = nullptr;
 
     public:
         CUART(CAUX& aux);
@@ -45,9 +50,6 @@ class CUART {
         NUART_Baud_Rate Get_Baud_Rate();
         void Set_Baud_Rate(NUART_Baud_Rate rate);
 
-        NUART_Blocking_State Get_Blocking_State();
-        void Set_Blocking_State(NUART_Blocking_State state);
-
         // IRQ handler vola tuto rutinu po signalizaci IRQ
         void IRQ_Callback();
 
@@ -59,11 +61,11 @@ class CUART {
         void Write(unsigned int num);
         void Write_Hex(unsigned int num);
 
-        // precist nebo se zablokovat, dokud neni co cist (pokud je nastaveno jako blokujici)
-        int Read_Or_Wait(char* str, unsigned int len, IFile* file);
+        // precist nejvyse len znaku z bufferu, pokud je prazdny, vrati 0
+        int Read(char* str, unsigned int len);
 
-        // pocka na udalost (zablokuje proces)
-        void Wait_For_Event(IFile* file);
+        // nastavi callback pro notifikaci pri IRQ
+        void Set_Rx_Callback(TUART_Rx_Callback callback, void* userdata = nullptr);
 };
 
 extern CUART sUART0;

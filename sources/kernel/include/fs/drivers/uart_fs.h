@@ -12,6 +12,8 @@ class CUART_File final : public IFile {
         // UART kanal
         int mChannel;
 
+        NUART_Blocking_State mBlocking_State = NUART_Blocking_State::Blocking;
+
     public:
         CUART_File(int channel)
             : IFile(NFile_Type_Major::Character), mChannel(channel) {
@@ -24,20 +26,34 @@ class CUART_File final : public IFile {
         virtual uint32_t Read(char* buffer, uint32_t num) override {
             if (num > 0 && buffer != nullptr) {
                 if (mChannel == 0) {
-                    return sUART0.Read_Or_Wait(buffer, num, this);
+                    while (true) {
+                        int n = sUART0.Read(buffer, num);
+                        if (n > 0 || mBlocking_State == NUART_Blocking_State::Non_Blocking)
+                            return n;
+
+                        Wait(1);
+                    }
+                    
                 }
             }
 
             return 0;
         }
 
+        static void UART_Rx_Callback(void* userdata) {
+            // probudi proces blokovany na cteni pri prijeti dat
+            reinterpret_cast<CUART_File*>(userdata)->Notify(1);
+        }
+
         virtual bool Wait(uint32_t count) override {
             if (mChannel == 0) {
                 Wait_Enqueue_Current();
-                sUART0.Wait_For_Event(this);
-
+                sUART0.Set_Rx_Callback(&UART_Rx_Callback, this);
+                
                 // zablokujeme, probudi nas az notify
                 sProcessMgr.Block_Current_Process();
+
+                sUART0.Set_Rx_Callback(nullptr);
                 return true;
             }
 
@@ -75,7 +91,7 @@ class CUART_File final : public IFile {
                 if (mChannel == 0) {
                     params->baud_rate = sUART0.Get_Baud_Rate();
                     params->char_length = sUART0.Get_Char_Length();
-                    params->blocking_state = sUART0.Get_Blocking_State();
+                    params->blocking_state = mBlocking_State;
                     return true;
                 }
             }
@@ -85,7 +101,7 @@ class CUART_File final : public IFile {
                 if (mChannel == 0) {
                     sUART0.Set_Baud_Rate(params->baud_rate);
                     sUART0.Set_Char_Length(params->char_length);
-                    sUART0.Set_Blocking_State(params->blocking_state);
+                    mBlocking_State = params->blocking_state;
                     return true;
                 }
             }
